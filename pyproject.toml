@@ -12,3 +12,8 @@ dependencies = [
     "pydantic>=2.7",
     "uvicorn[standard]>=0.30",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

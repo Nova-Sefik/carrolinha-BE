@@ -45,7 +45,7 @@ def day_param(
 
 
 def hour_param(
-    hour: int = Query(8, ge=5, le=24, description="Service hour 5–24; 24 = 00:00–00:59")
+    hour: int = Query(8, ge=5, le=24, description="Service hour 5-24; 24 = 00:00-00:59")
 ) -> int:
     return hour
 

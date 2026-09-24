@@ -7,7 +7,7 @@
 --
 -- Conventions
 --   date      'YYYY-MM-DD' operational date (validations.operational_date)
---   hour      5..24 service hour; 24 = 00:00–00:59 after midnight
+--   hour      5..24 service hour; 24 = 00:00-00:59 after midnight
 --   operator  UI group id: metro | carris | cm | rail | ferry | other
 --             (mapping from agency_code in app/reference.py OPERATORS)
 --   segment   regular | sub23 | senior  (from products_classification.csv)

@@ -8,3 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+
+*.duckdb.wal
+# raw data never goes in git; the built warehouse.duckdb (a few MB) does
+data/raw/

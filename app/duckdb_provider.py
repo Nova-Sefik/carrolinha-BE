@@ -69,7 +69,7 @@ class DuckDBProvider:
             is_mock=False,
             week_start=R.WEEK_START,
             week_end=R.WEEK_END,
-            note="Computed from TML validations, 31 Aug–6 Sep 2026.",
+            note="Computed from TML validations, 31 Aug-6 Sep 2026.",
             days=[S.Day(**d) for d in R.DAYS],
             hours=[
                 S.HourLabel(hour=h, label=("00" if h == 24 else f"{h:02d}") + ":00")
