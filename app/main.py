@@ -10,7 +10,7 @@ Interactive docs: http://localhost:8000/docs
 import os
 from typing import List, Literal, Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import reference as R
@@ -25,7 +25,7 @@ app = FastAPI(
 
 # Hackathon setting: any origin may call the API. Tighten before real use.
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_methods=["GET"], allow_headers=["*"]
+    CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST"], allow_headers=["*"]
 )
 
 
@@ -228,3 +228,33 @@ def journey_traffic(
         anywhere=any_ids, match=match, min_volume=min_volume, compare=compare,
         limit=limit, offset=offset, places=found,
     )
+
+
+# ------------------------------------------------------------------ planner
+@app.get("/api/planner/health")
+def planner_health():
+    from . import planner
+
+    return {"ok": bool(planner.api_key()), "configured": bool(planner.api_key()), "model": planner.MODEL}
+
+
+@app.post("/api/planner")
+def planner_route(request: Request, body: dict = Body(...), p=Depends(get_provider)):
+    """AI planning assistant. The browser never sees the OpenAI key; every number comes from a tool."""
+    import openai
+
+    from . import planner
+
+    planner.check_origin(request.headers.get("origin"))
+    forwarded = request.headers.get("x-forwarded-for", "")
+    planner.limiter.check(forwarded.split(",")[0].strip() or (request.client.host if request.client else "unknown"))
+    try:
+        return planner.plan(body, p)
+    except openai.AuthenticationError:
+        raise HTTPException(401, "OpenAI rejected the API key configured on the backend.")
+    except openai.RateLimitError:
+        raise HTTPException(429, "OpenAI rate or usage limit reached. Check the project limits and billing.")
+    except openai.APITimeoutError:
+        raise HTTPException(504, "OpenAI took too long to answer. Try a narrower question.")
+    except openai.APIError as error:
+        raise HTTPException(502, f"The OpenAI request failed: {getattr(error, 'message', error)}")

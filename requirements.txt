@@ -3,4 +3,5 @@ uvicorn[standard]>=0.30
 pydantic>=2.7
 h3>=4.1
 duckdb>=1.1
+openai>=3.19   # /api/planner
 httpx>=0.27   # only for tests (TestClient)

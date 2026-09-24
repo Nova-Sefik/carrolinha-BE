@@ -293,9 +293,15 @@ class JourneyStore:
     def _summary(day, hour, origin, through, destination, anywhere, match, min_volume, places) -> str:
         label = next(d["label"] for d in R.DAYS if d["date"] == day)
         parts = [label + (f" {('00' if hour == 24 else f'{hour:02d}')}:00" if hour is not None else " (whole day)")]
-        path = [places[s].name for s in [origin, *through, destination] if s]
+        path = []
+        if origin:
+            path.append(f"from {places[origin].name}")
+        if through:
+            path.append("through " + " → ".join(places[s].name for s in through))
+        if destination:
+            path.append(f"to {places[destination].name}")
         if path:
-            parts.append(("exactly " if match == "exact" else "") + " → ".join(path))
+            parts.append(("exactly " if match == "exact" else "") + " ".join(path))
         if anywhere:
             parts.append("touching " + " or ".join(places[s].name for s in anywhere))
         if min_volume:

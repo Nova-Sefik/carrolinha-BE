@@ -16,3 +16,11 @@ services:
         value: mock          # switch to duckdb once warehouse.duckdb is committed
       - key: CARROLINHA_DB
         value: warehouse.duckdb
+      # Planner secrets: set in the Render dashboard, never here
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        sync: false
+      # Comma-separated frontend origins allowed to call /api/planner
+      - key: CARROLINHA_ALLOWED_ORIGINS
+        sync: false
