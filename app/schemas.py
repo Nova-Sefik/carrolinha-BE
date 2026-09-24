@@ -330,6 +330,7 @@ class GoldenReplaced(BaseModel):
     riders_removed_per_day: float
     line_riders_per_day: float
     share_of_line: Optional[float]
+    frequency_review_recommended: bool = Field(description="True when projected removed riders are at least 15% of current line riders")
 
 
 class GoldenHub(BaseModel):
@@ -378,8 +379,14 @@ class GoldenRoute(BaseModel):
     peak_hour: Optional[int]
     peak_riders: Optional[float]
     trips_needed_peak: Optional[int]
+    peak_headway_min: Optional[int] = Field(description="Minutes between peak vehicles implied by trips_needed_peak")
     share_a_to_b: Optional[float]
+    share_b_to_a: Optional[float]
+    from_to_per_day: Optional[float] = Field(description="Multi-vehicle weekday journeys from the returned from place to the returned to place")
+    to_from_per_day: Optional[float] = Field(description="Multi-vehicle weekday journeys in the reverse direction")
     spike_z: float
+    demand_top_percent: int = Field(description="Approximate upper-tail percentage represented by spike_z, minimum 1")
+    shown_paths_share: float = Field(description="Share of multi-vehicle journeys covered by the returned current_paths list")
     verdict: Literal["strong", "viable", "weak"]
     flags: List[GoldenFlag]
     hourly: List[GoldenHour]

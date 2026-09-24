@@ -7,6 +7,7 @@ Switch to it with:
 """
 
 import json
+import math
 import threading
 from functools import lru_cache
 from typing import List, Optional
@@ -34,6 +35,22 @@ def _segments(segment: str) -> List[str]:
 def _in(values: List[str]) -> str:
     """A safe SQL IN-list for values already validated against a whitelist."""
     return "(" + ",".join("'" + v.replace("'", "''") + "'" for v in values) + ")"
+
+
+def _golden_derived(multi_per_day, share_a_to_b, trips_needed_peak, spike_z):
+    """Canonical API derivatives for a golden route; clients only format these values."""
+    share_b_to_a = None if share_a_to_b is None else round(1 - share_a_to_b, 4)
+    from_to_per_day = None if share_a_to_b is None else round(multi_per_day * share_a_to_b, 1)
+    to_from_per_day = None if from_to_per_day is None else round(multi_per_day - from_to_per_day, 1)
+    peak_headway_min = None if not trips_needed_peak else int(math.floor(60 / trips_needed_peak + 0.5))
+    upper_tail_pct = 100 * (1 - (0.5 * (1 + math.erf(spike_z / math.sqrt(2)))))
+    return {
+        "share_b_to_a": share_b_to_a,
+        "from_to_per_day": from_to_per_day,
+        "to_from_per_day": to_from_per_day,
+        "peak_headway_min": peak_headway_min,
+        "demand_top_percent": max(1, int(math.floor(upper_tail_pct + 0.5))),
+    }
 
 
 class DuckDBProvider:
@@ -459,17 +476,25 @@ class DuckDBProvider:
         out = []
         for r in rows:
             paths = json.loads(r[22] or "[]")
+            replaced = json.loads(r[23] or "[]")
+            share_a_to_b = r[17]
+            derived = _golden_derived(r[5], share_a_to_b, r[16], r[18])
             out.append(S.GoldenRoute(
                 route_id=r[0], rank=r[1], from_=pl[r[2]], to=pl[r[3]], distance_km=r[4], multi_per_day=r[5],
                 direct_per_day=r[6], multi_share=r[7], avg_legs=r[8], current_min=r[9], projected_min=r[10],
                 saved_min=r[11], riders_per_day=r[12], person_hours_per_day=r[13], peak_hour=r[14], peak_riders=r[15],
-                trips_needed_peak=r[16], share_a_to_b=r[17], spike_z=r[18], verdict=r[19],
+                trips_needed_peak=r[16], share_a_to_b=share_a_to_b, spike_z=r[18],
+                shown_paths_share=round(sum(p["share"] for p in paths), 4), verdict=r[19],
+                **derived,
                 flags=[S.GoldenFlag(**f) for f in json.loads(r[20] or "[]")],
                 hourly=[S.GoldenHour(**h) for h in json.loads(r[21] or "[]")],
                 paths=[S.GoldenPath(legs=[S.GoldenLeg(**l) for l in p["legs"]],
                                     via=[pl[v] for v in p["via"] if v in pl],
                                     journeys_per_day=p["journeys_per_day"], share=p["share"]) for p in paths],
-                replaced=[S.GoldenReplaced(**x) for x in json.loads(r[23] or "[]")],
+                replaced=[S.GoldenReplaced(**{
+                    **x,
+                    "frequency_review_recommended": (x.get("share_of_line") or 0) >= 0.15,
+                }) for x in replaced],
                 hubs=[S.GoldenHub(**{**h, "name": pl[h["stop_id"]].name, "lat": pl[h["stop_id"]].lat,
                                      "lon": pl[h["stop_id"]].lon}) for h in json.loads(r[24] or "[]") if h["stop_id"] in pl],
                 direct_lines=[S.GoldenDirect(**d) for d in json.loads(r[25] or "[]")],
