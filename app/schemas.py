@@ -402,3 +402,147 @@ class GoldenResponse(BaseModel):
     routes: List[GoldenRoute]
     method: str
     assumptions: Dict[str, float]
+
+
+# ------------------------------------------------------------- /api/places
+class PlaceMatch(BaseModel):
+    stop_id: str
+    name: str
+    lat: float
+    lon: float
+    operators: List[OperatorId]
+
+
+class PlacesResponse(BaseModel):
+    query: str
+    places: List[PlaceMatch]
+
+
+# ------------------------------------------ comparisons (hour vs typical)
+ComparisonStatus = Literal[
+    "ok", "insufficient_baseline", "incomplete_coverage", "below_privacy_threshold"
+]
+
+
+class BaselineDay(BaseModel):
+    date: str
+    value: Optional[float] = Field(description="Null when below the privacy threshold")
+
+
+class ComparisonHour(BaseModel):
+    hour: int
+    current: Optional[float] = Field(description="Null when not covered or below the privacy threshold")
+    typical: Optional[float] = Field(description="Null when the baseline is insufficient or below the privacy threshold")
+    complete: bool = Field(description="The selected day's data fully covers this hour")
+
+
+class Comparison(BaseModel):
+    status: ComparisonStatus
+    current: Optional[float]
+    typical: Optional[float]
+    difference: Optional[float] = Field(description="current - typical")
+    difference_pct: Optional[float] = Field(description="100 x difference / typical; null when typical is 0 or unknown")
+    method: str
+    day_type: Literal["weekday", "weekend"]
+    baseline_days: List[BaselineDay]
+    sample_days: int
+    min_sample_days: int
+    hours_compared: List[int]
+    hourly: List[ComparisonHour] = Field(description="The whole service day, current vs typical, for context")
+    note: Optional[str] = None
+
+
+CompareMeasure = Literal["stop_boardings", "network_boardings", "transfers", "line_boardings"]
+
+
+class CompareSubject(BaseModel):
+    id: str
+    name: str
+
+
+class CompareResponse(BaseModel):
+    measure: CompareMeasure
+    subject: Optional[CompareSubject]
+    date: str
+    hour: int
+    comparison: Comparison
+
+
+# -------------------------------------------------------- /api/journey-traffic
+DestinationEvidence = Literal["known", "unknown"]
+
+
+class JourneyPath(BaseModel):
+    key: str = Field(description="Stable id: stop ids joined by '>' plus ':known' or ':unknown'")
+    rank: int
+    path: List[Place] = Field(description="Tap locations in order; the last one is the destination only when destination is known")
+    destination: DestinationEvidence
+    metro_exit_share: Optional[float] = Field(description="Share of these journeys whose destination is a Metro exit (the rest are next-boarding inferred); null when unknown")
+    modes: List[str] = Field(description="Most common operator sequence, one per boarding")
+    modes_share: float = Field(description="Share of these journeys that used that operator sequence")
+    journeys: int
+    share_pct: float = Field(description="Share of the shown volume")
+    typical: Optional[float] = Field(description="Typical volume for this path; null when the baseline is insufficient or below the privacy threshold")
+    difference_pct: Optional[float]
+
+
+class SankeyNode(BaseModel):
+    id: str
+    name: str
+    layer: int = Field(description="0 = origin, last = destination")
+    kind: Literal["stop", "other", "more", "unknown"]
+    stop_id: Optional[str]
+    value: int
+
+
+class SankeyLink(BaseModel):
+    source: int
+    target: int
+    value: int
+
+
+class JourneySankey(BaseModel):
+    layers: List[str]
+    nodes: List[SankeyNode]
+    links: List[SankeyLink]
+
+
+class JourneyTotals(BaseModel):
+    matched_volume: Optional[int] = Field(description="Every journey matching the filters; null when below the privacy threshold")
+    shown_volume: int = Field(description="Journeys in the paths returned (sum of all pages); equals the Sankey total")
+    shown_paths: int
+    below_min_volume: int = Field(description="Journeys in paths under min_volume")
+    below_privacy_threshold: int = Field(description="Journeys in paths under the privacy threshold; counted but never listed")
+
+
+class JourneyFilters(BaseModel):
+    day: str
+    hour: Optional[int]
+    origin: Optional[Place]
+    through: List[Place]
+    destination: Optional[Place]
+    any: List[Place]
+    match: Literal["contains", "exact"]
+    min_volume: int
+    human_summary: str
+    logic: str
+
+
+class JourneyCoverage(BaseModel):
+    complete: bool = Field(description="The selected day/hour is fully covered by the source files")
+    complete_hours: List[int] = Field(description="Fully covered service hours on the selected day")
+    source: str
+
+
+class JourneyTrafficResponse(BaseModel):
+    applied_filters: JourneyFilters
+    totals: JourneyTotals
+    paths: List[JourneyPath]
+    offset: int
+    limit: int
+    sankey: JourneySankey
+    comparison: Optional[Comparison]
+    coverage: JourneyCoverage
+    privacy_min: int
+    method: str
+    limitations: List[str]

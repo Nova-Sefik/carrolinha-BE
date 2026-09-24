@@ -12,3 +12,9 @@ wheels/
 *.duckdb.wal
 # raw data never goes in git; the built warehouse.duckdb (a few MB) does
 data/raw/
+
+# Secrets and the private journey table (exact counts, never committed)
+.env
+.env.*
+journeys.duckdb
+journeys.duckdb.wal

@@ -552,6 +552,64 @@ class DuckDBProvider:
         )
 
 
+    # ---------------------------------------------------------------- places
+    def places_by_id(self, ids) -> dict:
+        return self._places(set(ids))
+
+    def search_places(self, query: str, limit: int) -> S.PlacesResponse:
+        """Hubs whose name contains the query, exact and prefix matches first, then busiest."""
+        if not hasattr(self, "_volume"):
+            self._volume = dict(self._q("SELECT stop_id, sum(boardings) FROM fact_stop_hour GROUP BY stop_id"))
+        norm = query.strip().lower()
+        rows = self._q(
+            """SELECT stop_id, name, lat, lon, operators,
+                      CASE WHEN lower(strip_accents(name)) = strip_accents(?) THEN 0
+                           WHEN lower(strip_accents(name)) LIKE strip_accents(?) THEN 1 ELSE 2 END AS rank_
+               FROM dim_stop
+               WHERE lower(strip_accents(name)) LIKE strip_accents(?) OR stop_id = ?""",
+            [norm, norm + "%", "%" + norm + "%", query.strip()],
+        )
+        rows.sort(key=lambda r: (r[5], -self._volume.get(r[0], 0), r[1]))
+        return S.PlacesResponse(
+            query=query,
+            places=[S.PlaceMatch(stop_id=r[0], name=r[1], lat=r[2], lon=r[3], operators=r[4]) for r in rows[:limit]],
+        )
+
+    # -------------------------------------------------------------- compare
+    def compare(self, measure: str, subject: Optional[str], date: str, hour: int,
+                ops: List[str], segment: str) -> Optional[S.CompareResponse]:
+        """Hour vs typical for a warehouse measure. Returns None for an unknown subject."""
+        from . import baseline as B
+
+        days = [date] + B.comparable_days(date)
+        day_sql = f"date IN {_in(days)}"
+        if measure == "network_boardings":
+            name = None
+            sql = (f"SELECT date, hour, sum(boardings) FROM fact_stop_hour WHERE {day_sql} "
+                   f"AND operator IN {_in(ops)} AND segment IN {_in(_segments(segment))} GROUP BY 1, 2")
+            params = []
+        elif measure in ("stop_boardings", "transfers"):
+            name = self._scalar("SELECT name FROM dim_stop WHERE stop_id = ?", [subject])
+            if measure == "stop_boardings":
+                sql = (f"SELECT date, hour, sum(boardings) FROM fact_stop_hour WHERE {day_sql} AND stop_id = ? "
+                       f"AND operator IN {_in(ops)} AND segment IN {_in(_segments(segment))} GROUP BY 1, 2")
+            else:
+                sql = f"SELECT date, hour, sum(transfers) FROM fact_transfer_hour WHERE {day_sql} AND stop_id = ? GROUP BY 1, 2"
+            params = [subject]
+        else:  # line_boardings
+            name = self._scalar("SELECT label || ' ' || name FROM dim_line WHERE line_id = ?", [subject])
+            sql = f"SELECT date, hour, sum(boardings) FROM fact_line_hour WHERE {day_sql} AND line_id = ? GROUP BY 1, 2"
+            params = [subject]
+        if measure != "network_boardings" and name is None:
+            return None
+        values = {(d, h): float(v) for d, h, v in self._q(sql, params)}
+        # The warehouse covers every service hour of the dataset week
+        comparison = B.build_comparison(values, date, [hour], lambda d, h: True)
+        return S.CompareResponse(
+            measure=measure, subject=S.CompareSubject(id=subject, name=name) if name else None,
+            date=date, hour=hour, comparison=comparison,
+        )
+
 @lru_cache(maxsize=1)
 def get_duckdb_provider(path: str) -> DuckDBProvider:
     return DuckDBProvider(path)

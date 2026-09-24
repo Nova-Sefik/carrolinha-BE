@@ -8,7 +8,7 @@ Interactive docs: http://localhost:8000/docs
 """
 
 import os
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -154,3 +154,77 @@ def anomalies(
 def golden(p=Depends(get_provider)):
     """Golden lines: direct links where many people need 2+ vehicles today (typical weekday)."""
     return p.golden()
+
+
+@app.get("/api/places", response_model=S.PlacesResponse)
+def places(
+    q: str = Query(..., min_length=2, description="Part of a stop or hub name"),
+    limit: int = Query(10, ge=1, le=50),
+    p=Depends(get_provider),
+):
+    """Resolve a place name to hub stop_ids for path filters."""
+    return p.search_places(q, limit)
+
+
+@app.get("/api/compare", response_model=S.CompareResponse)
+def compare(
+    measure: S.CompareMeasure = Query(..., description="What to compare"),
+    subject: Optional[str] = Query(None, description="stop_id for stop measures, line_id for line_boardings"),
+    day: str = Depends(day_param),
+    hour: int = Depends(hour_param),
+    ops: List[str] = Depends(ops_param),
+    segment: str = Depends(segment_param),
+    p=Depends(get_provider),
+):
+    """This hour versus typical: the median of the same hour on the other days of the same type."""
+    if measure != "network_boardings" and not subject:
+        raise HTTPException(422, f"subject is required for {measure}")
+    res = p.compare(measure, subject, day, hour, ops, segment)
+    if res is None:
+        raise HTTPException(404, f"unknown subject {subject!r}")
+    return res
+
+
+def _stop_list(value: Optional[str]) -> List[str]:
+    return [s.strip() for s in (value or "").split(",") if s.strip()]
+
+
+def get_journeys():
+    from .journeys import JourneysUnavailable, get_journey_store
+
+    try:
+        return get_journey_store(os.environ.get("CARROLINHA_JOURNEYS", "journeys.duckdb"))
+    except JourneysUnavailable as error:
+        raise HTTPException(503, str(error))
+
+
+@app.get("/api/journey-traffic", response_model=S.JourneyTrafficResponse)
+def journey_traffic(
+    day: str = Depends(day_param),
+    hour: Optional[int] = Query(None, ge=5, le=24, description="Service hour; omit for the whole day"),
+    origin: Optional[str] = Query(None, description="stop_id where the journey starts"),
+    through: Optional[str] = Query(None, description="Comma-separated stop_ids passed in this order, consecutively"),
+    destination: Optional[str] = Query(None, description="stop_id where the journey ends (known destinations only)"),
+    anywhere: Optional[str] = Query(None, alias="any", description="Comma-separated stop_ids; journeys touching any of them"),
+    match: Literal["contains", "exact"] = Query("contains", description="exact = the whole journey is origin, through, destination"),
+    min_volume: int = Query(0, ge=0, description="Only list paths with at least this many journeys"),
+    compare: bool = Query(True, description="Include current vs typical"),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    p=Depends(get_provider),
+    j=Depends(get_journeys),
+):
+    """Journeys along a directed path, with volume threshold and hour-vs-typical comparison."""
+    through_ids, any_ids = _stop_list(through), _stop_list(anywhere)
+    requested = [s for s in [origin, *through_ids, destination, *any_ids] if s]
+    found = p.places_by_id(requested)
+    unknown = sorted(set(requested) - set(found))
+    if unknown:
+        raise HTTPException(422, f"unknown stop_id(s) {unknown}; resolve names with /api/places?q=")
+    if match == "exact" and not (origin or through_ids or destination):
+        raise HTTPException(422, "match=exact needs origin, through or destination")
+    return j.traffic(
+        day=day, hour=hour, origin=origin, through=through_ids, destination=destination,
+        anywhere=any_ids, match=match, min_volume=min_volume, compare=compare,
+        limit=limit, offset=offset, places=found,
+    )
