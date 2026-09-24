@@ -258,3 +258,16 @@ def planner_route(request: Request, body: dict = Body(...), p=Depends(get_provid
         raise HTTPException(504, "OpenAI took too long to answer. Try a narrower question.")
     except openai.APIError as error:
         raise HTTPException(502, f"The OpenAI request failed: {getattr(error, 'message', error)}")
+
+
+@app.post("/api/tools/{name}")
+def run_tool(name: str, body: dict = Body(default={}), p=Depends(get_provider)):
+    """Run one planner tool without the model (preset graphs): the same code and numbers as AI answers."""
+    from . import planner
+
+    if name not in {tool["name"] for tool in planner.TOOLS}:
+        raise HTTPException(404, f"unknown tool {name!r}")
+    try:
+        return planner.execute_tool(name, body.get("args") or {}, body.get("live_filters") or {}, p)
+    except (ValueError, KeyError) as error:
+        raise HTTPException(422, str(error))
