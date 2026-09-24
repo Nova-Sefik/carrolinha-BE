@@ -1,6 +1,9 @@
 """
-DuckDBProvider: Reads warehouse.duckdb (tables defined in
-sql/schema.sql).
+DuckDBProvider: the real backend. Reads warehouse.duckdb (tables defined in
+sql/schema.sql) and returns exactly the same models as MockProvider.
+
+Switch to it with:
+    CARROLINHA_PROVIDER=duckdb CARROLINHA_DB=warehouse.duckdb uvicorn app.main:app
 """
 
 import json
@@ -14,6 +17,14 @@ from . import reference as R
 from . import schemas as S
 
 ALL_SEGMENTS = ["regular", "sub23", "senior"]
+
+GOLDEN_METHOD = (
+    "Journeys = a card's taps chained until a 60-min gap; destination = where the card starts its next "
+    "journey (or its Metro exit). Areas = H3 cells of ~5 km². A pair of areas becomes a golden line when, "
+    "on a typical weekday, an outlying number of people (robust z of log volume >= 2.5) need 2+ vehicles "
+    "between them, that is at least half of all trips between them, the ends are 3+ km apart and a direct "
+    "bus would save 8+ minutes. Projections assume 60% of those travellers switch."
+)
 
 
 def _segments(segment: str) -> List[str]:
@@ -69,7 +80,7 @@ class DuckDBProvider:
             is_mock=False,
             week_start=R.WEEK_START,
             week_end=R.WEEK_END,
-            note="Computed from TML validations, 31 Aug-6 Sep 2026.",
+            note="Computed from TML validations, 31 Aug–6 Sep 2026.",
             days=[S.Day(**d) for d in R.DAYS],
             hours=[
                 S.HourLabel(hour=h, label=("00" if h == 24 else f"{h:02d}") + ":00")
@@ -284,7 +295,8 @@ class DuckDBProvider:
     # ----------------------------------------------------------------- lines
     def line_profile(self, line_id: str, date: str) -> Optional[S.LineProfile]:
         L = self._q(
-            "SELECT line_id, label, name, mode, operator, seats, standing, capacity_source, shape FROM dim_line WHERE line_id = ?",
+            """SELECT line_id, label, name, mode, operator, seats, standing, capacity_source, shape,
+                              whatif_to, whatif_from FROM dim_line WHERE line_id = ?""",
             [line_id],
         )
         if not L:
@@ -294,14 +306,15 @@ class DuckDBProvider:
         data = {
             r[0]: r[1:]
             for r in self._q(
-                "SELECT hour, boardings, est_peak_load, trips FROM fact_line_hour WHERE line_id = ? AND date = ?",
+                "SELECT hour, boardings, est_peak_load, trips, places_offered FROM fact_line_hour WHERE line_id = ? AND date = ?",
                 [line_id, date],
             )
         }
         rows = []
         for h in R.HOURS:
-            b, est, trips = data.get(h, (0.0, 0.0, 0))
-            offered = int(trips) * places
+            b, est, trips, offered = data.get(h, (0.0, 0.0, 0, None))
+            # real places offered when the pipeline knows each trip's vehicle, else trips x typical vehicle
+            offered = int(offered) if offered is not None else int(trips) * places
             rows.append(
                 S.LineHour(
                     hour=h,
@@ -325,10 +338,11 @@ class DuckDBProvider:
             hours=rows,
             peak=S.PeakRef(hour=peak.hour, load_factor=peak.load_factor),
             whatif=S.WhatIf(
-                move_to_hours=R.WHATIF_ADD_HOURS,
-                move_from_hours=R.WHATIF_REMOVE_HOURS,
+                move_to_hours=json.loads(L[9]) if L[9] else [],
+                move_from_hours=json.loads(L[10]) if L[10] else [],
                 note="Computed in the browser: for N moved trips, trips[to[i]] += 1 and trips[from[i]] -= 1 "
-                "for i < N; places_offered = trips × vehicle.places; load_factor = est_peak_load / places_offered.",
+                "for i < N; each moved trip adds/removes vehicle.places to places_offered; "
+                "load_factor = est_peak_load / places_offered.",
             ),
         )
 
@@ -353,7 +367,11 @@ class DuckDBProvider:
             )["pairs"].append(r[4:])
         inter = []
         for st, d in by_stop.items():
-            worst = max(p[3] for p in d["pairs"])
+            # "Fragile" = a connection that matters (>= 5% of the hub's transfers, >= 50/day)
+            # where the typical passenger waits 12+ minutes. Tiny pairs are ignored.
+            total = sum(p[2] for p in d["pairs"]) or 1
+            big = [p for p in d["pairs"] if p[2] >= max(50, 0.05 * total)] or d["pairs"]
+            worst = max(p[3] for p in big)
             inter.append(
                 S.Interchange(
                     stop_id=st,
@@ -362,7 +380,7 @@ class DuckDBProvider:
                     lon=d["lon"],
                     transfers=int(sum(p[2] for p in d["pairs"])),
                     worst_median_wait_min=int(worst),
-                    fragile=worst >= 10,
+                    fragile=worst >= 12,
                     pairs=[
                         S.TransferPair(
                             from_operator=p[0],
@@ -382,33 +400,82 @@ class DuckDBProvider:
                 )
             )
         inter.sort(key=lambda x: -x.transfers)
+        inter = inter[
+            :20
+        ]  # the list and map show the 20 busiest interchanges; KPIs use all
+        cols = {r[0] for r in self._q("DESCRIBE fact_flow")}
+        extra = "f.via, f.modes, f.via_share" if "via" in cols else "NULL, NULL, NULL"
         flows = self._q(
-            """SELECT f.from_stop_id, a.name, a.lon, a.lat, f.to_stop_id, b.name, b.lon, b.lat, f.journeys
-                           FROM fact_flow f JOIN dim_stop a ON a.stop_id = f.from_stop_id
-                           JOIN dim_stop b ON b.stop_id = f.to_stop_id
-                           WHERE f.date = ? ORDER BY f.journeys DESC LIMIT 50""",
+            f"""SELECT f.from_stop_id, a.name, a.lon, a.lat, f.to_stop_id, b.name, b.lon, b.lat, f.journeys, {extra}
+                FROM fact_flow f JOIN dim_stop a ON a.stop_id = f.from_stop_id
+                JOIN dim_stop b ON b.stop_id = f.to_stop_id
+                WHERE f.date = ? ORDER BY f.journeys DESC LIMIT 50""",
             [date],
         )
+        via_ids = {v for r in flows if r[9] for v in json.loads(r[9])}
+        places = self._places(via_ids)
         return S.TransfersResponse(
             date=date,
             interchanges=inter,
             flows=[
                 S.Flow(
-                    from_stop_id=r[0],
-                    from_name=r[1],
-                    from_lon=r[2],
-                    from_lat=r[3],
-                    to_stop_id=r[4],
-                    to_name=r[5],
-                    to_lon=r[6],
-                    to_lat=r[7],
-                    journeys=int(r[8]),
+                    from_stop_id=r[0], from_name=r[1], from_lon=r[2], from_lat=r[3],
+                    to_stop_id=r[4], to_name=r[5], to_lon=r[6], to_lat=r[7], journeys=int(r[8]),
+                    via=[places[v] for v in (json.loads(r[9]) if r[9] else []) if v in places],
+                    modes=json.loads(r[10]) if r[10] else [],
+                    via_share=r[11],
                 )
                 for r in flows
             ],
-            method="A transfer = two entry taps by the same card within 60 minutes on different operators. "
-            "Wait = minutes between the first leg's estimated arrival and the next tap.",
+            method="A transfer = two entry taps by the same card within 60 minutes on different operators, "
+            "where the first operator stops within 400 m of the hub. Wait = minutes from the first leg's "
+            "arrival (Metro exit tap, or the ferry/train timetable, or distance ÷ typical speed for buses) "
+            "to the next tap. Fragile = a connection with 5%+ of the hub's transfers and a median wait of 12+ min.",
         )
+
+    def _places(self, ids) -> dict:
+        ids = [i for i in ids if i]
+        if not ids:
+            return {}
+        rows = self._q(f"SELECT stop_id, name, lat, lon FROM dim_stop WHERE stop_id IN {_in(ids)}")
+        return {r[0]: S.Place(stop_id=r[0], name=r[1], lat=r[2], lon=r[3]) for r in rows}
+
+    # ---------------------------------------------------------------- golden
+    def golden(self) -> S.GoldenResponse:
+        tables = {r[0] for r in self._q("SELECT table_name FROM information_schema.tables")}
+        if "golden_route" not in tables:
+            return S.GoldenResponse(routes=[], method=GOLDEN_METHOD, assumptions={})
+        rows = self._q("""SELECT route_id, rank, from_stop_id, to_stop_id, distance_km, multi_per_day, direct_per_day,
+                                 multi_share, avg_legs, current_min, projected_min, saved_min, riders_per_day,
+                                 person_hours_per_day, peak_hour, peak_riders, trips_needed_peak, share_a_to_b, spike_z,
+                                 verdict, flags, hourly, paths, replaced, hubs, direct_lines
+                          FROM golden_route ORDER BY rank""")
+        ids = set()
+        for r in rows:
+            ids |= {r[2], r[3]}
+            ids |= {v for p in json.loads(r[22] or "[]") for v in p["via"]}
+            ids |= {h["stop_id"] for h in json.loads(r[24] or "[]")}
+        pl = self._places(ids)
+        out = []
+        for r in rows:
+            paths = json.loads(r[22] or "[]")
+            out.append(S.GoldenRoute(
+                route_id=r[0], rank=r[1], from_=pl[r[2]], to=pl[r[3]], distance_km=r[4], multi_per_day=r[5],
+                direct_per_day=r[6], multi_share=r[7], avg_legs=r[8], current_min=r[9], projected_min=r[10],
+                saved_min=r[11], riders_per_day=r[12], person_hours_per_day=r[13], peak_hour=r[14], peak_riders=r[15],
+                trips_needed_peak=r[16], share_a_to_b=r[17], spike_z=r[18], verdict=r[19],
+                flags=[S.GoldenFlag(**f) for f in json.loads(r[20] or "[]")],
+                hourly=[S.GoldenHour(**h) for h in json.loads(r[21] or "[]")],
+                paths=[S.GoldenPath(legs=[S.GoldenLeg(**l) for l in p["legs"]],
+                                    via=[pl[v] for v in p["via"] if v in pl],
+                                    journeys_per_day=p["journeys_per_day"], share=p["share"]) for p in paths],
+                replaced=[S.GoldenReplaced(**x) for x in json.loads(r[23] or "[]")],
+                hubs=[S.GoldenHub(**{**h, "name": pl[h["stop_id"]].name, "lat": pl[h["stop_id"]].lat,
+                                     "lon": pl[h["stop_id"]].lon}) for h in json.loads(r[24] or "[]") if h["stop_id"] in pl],
+                direct_lines=[S.GoldenDirect(**d) for d in json.loads(r[25] or "[]")],
+            ))
+        meta = dict(self._q("SELECT k, v FROM golden_meta")) if "golden_meta" in tables else {}
+        return S.GoldenResponse(routes=out, method=GOLDEN_METHOD, assumptions=meta)
 
     # ------------------------------------------------------------- anomalies
     def anomalies(self, date: Optional[str]) -> S.AnomaliesResponse:

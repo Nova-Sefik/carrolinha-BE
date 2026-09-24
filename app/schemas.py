@@ -1,11 +1,10 @@
 """
 Response models: the API contract, in code.
 
-The frontend builds against these shapes.
-The DuckDB provider must return exactly these models,
-so it never breaks the UI. FastAPI turns them into the OpenAPI docs at /docs.
+The frontend builds against these shapes. The mock provider and the DuckDB
+provider must both return exactly these models, so swapping one for the other
+never breaks the UI. FastAPI turns them into the OpenAPI docs at /docs.
 """
-
 from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -25,12 +24,8 @@ class Day(BaseModel):
 class Operator(BaseModel):
     id: OperatorId
     name: str
-    color: str = Field(
-        description="Hex colour to use for this operator everywhere in the UI"
-    )
-    agency_codes: List[str] = Field(
-        description="agency_code values in validations / plans API"
-    )
+    color: str = Field(description="Hex colour to use for this operator everywhere in the UI")
+    agency_codes: List[str] = Field(description="agency_code values in validations / plans API")
 
 
 class Segment(BaseModel):
@@ -39,14 +34,13 @@ class Segment(BaseModel):
 
 
 class HourLabel(BaseModel):
-    hour: int = Field(description="Service hour 5-24; 24 = 00:00-00:59 after midnight")
+    hour: int = Field(description="Service hour 5–24; 24 = 00:00–00:59 after midnight")
     label: str = Field(examples=["08:00"])
 
 
 class Scales(BaseModel):
     """Fixed maxima for colour scales. Use these, never per-hour maxima, so the
     time slider animation stays comparable across hours and days."""
-
     stop_boardings_max: float
     hex_boardings_max: float
     network_hour_max: float
@@ -85,7 +79,7 @@ class Kpis(BaseModel):
 class OperatorShare(BaseModel):
     operator: OperatorId
     boardings: int
-    share: float = Field(description="0-1")
+    share: float = Field(description="0–1")
 
 
 class HourValue(BaseModel):
@@ -103,21 +97,15 @@ class Overview(BaseModel):
     date: str
     kpis: Kpis
     operator_share: List[OperatorShare]
-    network_hourly: List[HourValue] = Field(
-        description="The pulse strip above the time slider"
-    )
+    network_hourly: List[HourValue] = Field(description="The pulse strip above the time slider")
     top_interchanges: List[InterchangeRef]
 
 
 # ----------------------------------------------------------------- /api/hex
 class HexCell(BaseModel):
-    h3: str = Field(
-        description="H3 cell index; feed straight into deck.gl H3HexagonLayer"
-    )
+    h3: str = Field(description="H3 cell index; feed straight into deck.gl H3HexagonLayer")
     boardings: float
-    expected: float = Field(
-        description="Same hour on a typical weekday (for anomaly colouring)"
-    )
+    expected: float = Field(description="Same hour on a typical weekday (for anomaly colouring)")
     ratio: float = Field(description="boardings / expected")
 
 
@@ -183,17 +171,13 @@ class StopDetail(BaseModel):
     lat: float
     lon: float
     operators: List[OperatorId]
-    operator_stop_ids: Dict[str, List[str]] = Field(
-        description="The operator stop_ids grouped into this hub"
-    )
+    operator_stop_ids: Dict[str, List[str]] = Field(description="The operator stop_ids grouped into this hub")
     date: str
     hour: int
     now: NowValue
     hourly: List[HourObsExp]
     week_grid: List[WeekRow]
-    mix: Dict[str, float] = Field(
-        description="Share of boardings: regular, sub23, senior (sums to 1)"
-    )
+    mix: Dict[str, float] = Field(description="Share of boardings: regular, sub23, senior (sums to 1)")
     facilities: Facilities
     transfers_here: Optional[TransfersHere] = None
 
@@ -209,14 +193,10 @@ class Vehicle(BaseModel):
 class LineHour(BaseModel):
     hour: int
     boardings: float
-    est_peak_load: float = Field(
-        description="Estimated people on board at the busiest point of an average trip that hour"
-    )
+    est_peak_load: float = Field(description="Estimated people on board at the busiest point of an average trip that hour")
     trips: int
     places_offered: int = Field(description="trips × vehicle places")
-    load_factor: float = Field(
-        description="est_peak_load / places_offered; >1 means over capacity"
-    )
+    load_factor: float = Field(description="est_peak_load / places_offered; >1 means over capacity")
 
 
 class PeakRef(BaseModel):
@@ -225,12 +205,8 @@ class PeakRef(BaseModel):
 
 
 class WhatIf(BaseModel):
-    move_to_hours: List[int] = Field(
-        description="The Nth moved trip goes to move_to_hours[N-1]"
-    )
-    move_from_hours: List[int] = Field(
-        description="…and is taken from move_from_hours[N-1]"
-    )
+    move_to_hours: List[int] = Field(description="The Nth moved trip goes to move_to_hours[N-1]")
+    move_from_hours: List[int] = Field(description="…and is taken from move_from_hours[N-1]")
     note: str
 
 
@@ -241,9 +217,7 @@ class LineProfile(BaseModel):
     mode: Literal["bus", "ferry"]
     operator: OperatorId
     vehicle: Vehicle
-    shape: List[List[float]] = Field(
-        description="[[lon, lat], ...] for a deck.gl PathLayer"
-    )
+    shape: List[List[float]] = Field(description="[[lon, lat], ...] for a deck.gl PathLayer")
     date: str
     hours: List[LineHour]
     peak: PeakRef
@@ -276,6 +250,13 @@ class Interchange(BaseModel):
     hourly: List[HourCount]
 
 
+class Place(BaseModel):
+    stop_id: str
+    name: str
+    lat: float
+    lon: float
+
+
 class Flow(BaseModel):
     from_stop_id: str
     from_name: str
@@ -286,12 +267,15 @@ class Flow(BaseModel):
     to_lon: float
     to_lat: float
     journeys: int
+    via: List[Place] = Field(default_factory=list, description="Hubs where people change vehicle, in order")
+    modes: List[str] = Field(default_factory=list, description="Operator of each leg, in order")
+    via_share: Optional[float] = Field(None, description="Share of this flow's journeys that follow this chain")
 
 
 class TransfersResponse(BaseModel):
     date: str
     interchanges: List[Interchange]
-    flows: List[Flow] = Field(description="For a deck.gl ArcLayer")
+    flows: List[Flow] = Field(description="Draw from -> via... -> to")
     method: str
 
 
@@ -321,3 +305,93 @@ class Alert(BaseModel):
 class AnomaliesResponse(BaseModel):
     alerts: List[Alert]
     method: str
+
+
+# ------------------------------------------------------------- /api/golden
+class GoldenLeg(BaseModel):
+    operator: str
+    line_id: str
+    label: str
+    name: str = ""
+
+
+class GoldenPath(BaseModel):
+    legs: List[GoldenLeg]
+    via: List[Place]
+    journeys_per_day: float
+    share: float = Field(description="Share of the route's multi-vehicle journeys following this chain")
+
+
+class GoldenReplaced(BaseModel):
+    operator: str
+    line_id: str
+    label: str
+    name: str = ""
+    riders_removed_per_day: float
+    line_riders_per_day: float
+    share_of_line: Optional[float]
+
+
+class GoldenHub(BaseModel):
+    stop_id: str
+    name: str
+    lat: float
+    lon: float
+    transfers_removed_per_day: float
+    hub_boardings_per_day: float
+    share_of_hub: Optional[float]
+
+
+class GoldenDirect(BaseModel):
+    operator: str
+    line_id: str
+    label: str
+    name: str = ""
+    journeys_per_day: float
+
+
+class GoldenFlag(BaseModel):
+    level: Literal["benefit", "info", "risk"]
+    text: str
+
+
+class GoldenHour(BaseModel):
+    hour: int
+    journeys: float
+
+
+class GoldenRoute(BaseModel):
+    route_id: str
+    rank: int
+    from_: Place = Field(alias="from")
+    to: Place
+    distance_km: float
+    multi_per_day: float = Field(description="Weekday journeys between the two areas needing 2+ vehicles (both ways)")
+    direct_per_day: float
+    multi_share: float
+    avg_legs: float
+    current_min: Optional[float] = Field(description="Median door-to-door minutes today")
+    projected_min: float = Field(description="Direct line: distance x 1.3 / 18 km/h + 6 min average wait")
+    saved_min: Optional[float]
+    riders_per_day: float = Field(description="Projected riders: multi_per_day x capture rate")
+    person_hours_per_day: Optional[float]
+    peak_hour: Optional[int]
+    peak_riders: Optional[float]
+    trips_needed_peak: Optional[int]
+    share_a_to_b: Optional[float]
+    spike_z: float
+    verdict: Literal["strong", "viable", "weak"]
+    flags: List[GoldenFlag]
+    hourly: List[GoldenHour]
+    paths: List[GoldenPath]
+    replaced: List[GoldenReplaced]
+    hubs: List[GoldenHub]
+    direct_lines: List[GoldenDirect]
+
+    model_config = {"populate_by_name": True}
+
+
+class GoldenResponse(BaseModel):
+    routes: List[GoldenRoute]
+    method: str
+    assumptions: Dict[str, float]

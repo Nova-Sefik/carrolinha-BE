@@ -148,3 +148,9 @@ def anomalies(
     if day is not None and day not in R.DATES:
         raise HTTPException(422, f"day must be one of {R.DATES}")
     return p.anomalies(day)
+
+
+@app.get("/api/golden", response_model=S.GoldenResponse, response_model_by_alias=True)
+def golden(p=Depends(get_provider)):
+    """Golden lines: direct links where many people need 2+ vehicles today (typical weekday)."""
+    return p.golden()
