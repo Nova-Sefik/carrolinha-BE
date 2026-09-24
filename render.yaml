@@ -1,0 +1,18 @@
+# Render Blueprint: New > Blueprint > pick this repo.
+# Free tier sleeps after 15 min idle; first request then takes ~1 min.
+# Open /api/health a few minutes before the demo to wake it.
+services:
+  - type: web
+    name: carrolinha-be
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: PULSO_PROVIDER
+        value: mock          # switch to duckdb once warehouse.duckdb is committed
+      - key: PULSO_DB
+        value: warehouse.duckdb
