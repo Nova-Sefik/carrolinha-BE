@@ -1,0 +1,323 @@
+"""
+Response models: the API contract, in code.
+
+The frontend builds against these shapes.
+The DuckDB provider must return exactly these models,
+so it never breaks the UI. FastAPI turns them into the OpenAPI docs at /docs.
+"""
+
+from typing import Dict, List, Literal, Optional
+
+from pydantic import BaseModel, Field
+
+OperatorId = Literal["metro", "carris", "cm", "rail", "ferry", "other"]
+SegmentId = Literal["all", "sub23", "senior"]
+
+
+# ---------------------------------------------------------------- /api/meta
+class Day(BaseModel):
+    date: str = Field(examples=["2026-09-01"])
+    label: str = Field(examples=["Tue 1 Sep"])
+    weekday: str
+    is_weekend: bool
+
+
+class Operator(BaseModel):
+    id: OperatorId
+    name: str
+    color: str = Field(
+        description="Hex colour to use for this operator everywhere in the UI"
+    )
+    agency_codes: List[str] = Field(
+        description="agency_code values in validations / plans API"
+    )
+
+
+class Segment(BaseModel):
+    id: SegmentId
+    label: str
+
+
+class HourLabel(BaseModel):
+    hour: int = Field(description="Service hour 5-24; 24 = 00:00-00:59 after midnight")
+    label: str = Field(examples=["08:00"])
+
+
+class Scales(BaseModel):
+    """Fixed maxima for colour scales. Use these, never per-hour maxima, so the
+    time slider animation stays comparable across hours and days."""
+
+    stop_boardings_max: float
+    hex_boardings_max: float
+    network_hour_max: float
+
+
+class LineRef(BaseModel):
+    line_id: str
+    label: str
+    name: str
+    mode: Literal["bus", "ferry"]
+    operator: OperatorId
+
+
+class Meta(BaseModel):
+    is_mock: bool
+    week_start: str
+    week_end: str
+    note: str
+    days: List[Day]
+    hours: List[HourLabel]
+    operators: List[Operator]
+    segments: List[Segment]
+    hex_resolution: int
+    scales: Scales
+    lines: List[LineRef]
+
+
+# ------------------------------------------------------------ /api/overview
+class Kpis(BaseModel):
+    boardings: int = Field(description="Entry validations that day, after filters")
+    busiest_hour: int
+    transfers: int = Field(description="Cross-operator transfers detected that day")
+    alerts: int
+
+
+class OperatorShare(BaseModel):
+    operator: OperatorId
+    boardings: int
+    share: float = Field(description="0-1")
+
+
+class HourValue(BaseModel):
+    hour: int
+    boardings: float
+
+
+class InterchangeRef(BaseModel):
+    stop_id: str
+    name: str
+    transfers: int
+
+
+class Overview(BaseModel):
+    date: str
+    kpis: Kpis
+    operator_share: List[OperatorShare]
+    network_hourly: List[HourValue] = Field(
+        description="The pulse strip above the time slider"
+    )
+    top_interchanges: List[InterchangeRef]
+
+
+# ----------------------------------------------------------------- /api/hex
+class HexCell(BaseModel):
+    h3: str = Field(
+        description="H3 cell index; feed straight into deck.gl H3HexagonLayer"
+    )
+    boardings: float
+    expected: float = Field(
+        description="Same hour on a typical weekday (for anomaly colouring)"
+    )
+    ratio: float = Field(description="boardings / expected")
+
+
+class HexResponse(BaseModel):
+    date: str
+    hour: int
+    resolution: int
+    cells: List[HexCell]
+
+
+# --------------------------------------------------------------- /api/stops
+class StopPoint(BaseModel):
+    stop_id: str
+    name: str
+    lat: float
+    lon: float
+    operators: List[OperatorId]
+    boardings: float
+    expected: float
+    ratio: float
+
+
+class StopsResponse(BaseModel):
+    date: str
+    hour: int
+    stops: List[StopPoint]
+
+
+# ---------------------------------------------------------- /api/stops/{id}
+class HourObsExp(BaseModel):
+    hour: int
+    boardings: float
+    expected: float
+
+
+class WeekRow(BaseModel):
+    date: str
+    weekday: str
+    hourly: List[float] = Field(description="Boardings for hours 5..24, in order")
+
+
+class Facilities(BaseModel):
+    shelter: bool
+    step_free: bool
+    realtime_display: bool
+    wheelchair_boarding: bool
+
+
+class NowValue(BaseModel):
+    boardings: float
+    expected: float
+    deviation_pct: float = Field(description="(boardings / expected − 1) × 100")
+
+
+class TransfersHere(BaseModel):
+    transfers: int
+    worst_median_wait_min: int
+
+
+class StopDetail(BaseModel):
+    stop_id: str
+    name: str
+    lat: float
+    lon: float
+    operators: List[OperatorId]
+    operator_stop_ids: Dict[str, List[str]] = Field(
+        description="The operator stop_ids grouped into this hub"
+    )
+    date: str
+    hour: int
+    now: NowValue
+    hourly: List[HourObsExp]
+    week_grid: List[WeekRow]
+    mix: Dict[str, float] = Field(
+        description="Share of boardings: regular, sub23, senior (sums to 1)"
+    )
+    facilities: Facilities
+    transfers_here: Optional[TransfersHere] = None
+
+
+# ---------------------------------------------------------- /api/lines/{id}
+class Vehicle(BaseModel):
+    seats: int
+    standing: int
+    places: int
+    source: str
+
+
+class LineHour(BaseModel):
+    hour: int
+    boardings: float
+    est_peak_load: float = Field(
+        description="Estimated people on board at the busiest point of an average trip that hour"
+    )
+    trips: int
+    places_offered: int = Field(description="trips × vehicle places")
+    load_factor: float = Field(
+        description="est_peak_load / places_offered; >1 means over capacity"
+    )
+
+
+class PeakRef(BaseModel):
+    hour: int
+    load_factor: float
+
+
+class WhatIf(BaseModel):
+    move_to_hours: List[int] = Field(
+        description="The Nth moved trip goes to move_to_hours[N-1]"
+    )
+    move_from_hours: List[int] = Field(
+        description="…and is taken from move_from_hours[N-1]"
+    )
+    note: str
+
+
+class LineProfile(BaseModel):
+    line_id: str
+    label: str
+    name: str
+    mode: Literal["bus", "ferry"]
+    operator: OperatorId
+    vehicle: Vehicle
+    shape: List[List[float]] = Field(
+        description="[[lon, lat], ...] for a deck.gl PathLayer"
+    )
+    date: str
+    hours: List[LineHour]
+    peak: PeakRef
+    whatif: WhatIf
+
+
+# ----------------------------------------------------------- /api/transfers
+class TransferPair(BaseModel):
+    from_operator: OperatorId
+    to_operator: OperatorId
+    transfers: int
+    median_wait_min: int
+    p90_wait_min: int
+
+
+class HourCount(BaseModel):
+    hour: int
+    transfers: float
+
+
+class Interchange(BaseModel):
+    stop_id: str
+    name: str
+    lat: float
+    lon: float
+    transfers: int
+    worst_median_wait_min: int
+    fragile: bool = Field(description="Any operator pair with median wait ≥ 10 min")
+    pairs: List[TransferPair]
+    hourly: List[HourCount]
+
+
+class Flow(BaseModel):
+    from_stop_id: str
+    from_name: str
+    from_lon: float
+    from_lat: float
+    to_stop_id: str
+    to_name: str
+    to_lon: float
+    to_lat: float
+    journeys: int
+
+
+class TransfersResponse(BaseModel):
+    date: str
+    interchanges: List[Interchange]
+    flows: List[Flow] = Field(description="For a deck.gl ArcLayer")
+    method: str
+
+
+# ----------------------------------------------------------- /api/anomalies
+class HourObsExp2(BaseModel):
+    hour: int
+    observed: float
+    expected: float
+
+
+class Alert(BaseModel):
+    alert_id: str
+    stop_id: str
+    name: str
+    lat: float
+    lon: float
+    date: str
+    hour: int
+    observed: float
+    expected: float
+    deviation_pct: float
+    robust_z: float
+    direction: Literal["above", "below"]
+    hourly: List[HourObsExp2]
+
+
+class AnomaliesResponse(BaseModel):
+    alerts: List[Alert]
+    method: str
