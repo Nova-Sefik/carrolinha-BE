@@ -178,6 +178,7 @@ class JourneyStore:
             comparison=comparison,
             coverage=S.JourneyCoverage(
                 complete=coverage_ok, complete_hours=self.complete_hours(day),
+                covered_days=[S.CoveredDay(date=d, hours=self.complete_hours(d)) for d in R.DATES],
                 source=f"Built from {int(self.meta.get('taps', 0)):,} validation taps "
                        f"({int(self.meta.get('journeys', 0)):,} journeys); hours without full coverage are flagged.",
             ),

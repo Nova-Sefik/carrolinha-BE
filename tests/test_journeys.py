@@ -162,6 +162,13 @@ class JourneyTrafficTests(UsesJourneyFixture):
         self.assertEqual(weekend["status"], "insufficient_baseline")
         self.assertIsNone(weekend["typical"])
 
+    def test_coverage_lists_every_day(self):
+        coverage = traffic("")["coverage"]
+        days = {d["date"]: d["hours"] for d in coverage["covered_days"]}
+        self.assertEqual(len(days), 7)
+        self.assertNotIn(9, days["2026-09-01"])
+        self.assertEqual(days["2026-09-06"], [])
+
     def test_validation(self):
         self.assertEqual(client.get("/api/journey-traffic?origin=nope").status_code, 422)
         self.assertEqual(client.get("/api/journey-traffic?match=exact").status_code, 422)

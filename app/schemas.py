@@ -529,9 +529,15 @@ class JourneyFilters(BaseModel):
     logic: str
 
 
+class CoveredDay(BaseModel):
+    date: str
+    hours: List[int] = Field(description="Fully covered service hours")
+
+
 class JourneyCoverage(BaseModel):
     complete: bool = Field(description="The selected day/hour is fully covered by the source files")
     complete_hours: List[int] = Field(description="Fully covered service hours on the selected day")
+    covered_days: List[CoveredDay] = Field([], description="Every day of the week with its fully covered hours, so clients can suggest periods that have data")
     source: str
 
 
