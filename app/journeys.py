@@ -18,7 +18,7 @@ from . import baseline as B
 from . import reference as R
 from . import schemas as S
 
-PRIVACY_MIN = int(os.environ.get("CARROLINHA_PRIVACY_MIN", "10"))
+from .privacy import PRIVACY_MIN
 SANKEY_NODES_PER_LAYER = 20
 SANKEY_MIDDLE_LAYERS = 3
 UNKNOWN = "__unknown__"

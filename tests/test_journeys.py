@@ -49,6 +49,10 @@ def build_warehouse():
     for date, v in zip(WEEKDAYS, [80, 100, 90, 70, 110]):
         con.execute("INSERT INTO fact_stop_hour VALUES (?, 8, 'a', 'metro', 'regular', ?, ?)", [date, v, v])
     con.execute("INSERT INTO fact_stop_hour VALUES ('2026-09-05', 8, 'a', 'metro', 'regular', 40, 40)")
+    # Transfers on Tue: hub b has a large pair and a 2-person pair; hub d only 4 transfers in total
+    con.executemany("INSERT INTO fact_transfer VALUES ('2026-09-01', ?, ?, ?, ?, ?, ?)", [
+        ("b", "metro", "carris", 200, 5, 9), ("b", "ferry", "metro", 2, 30, 41), ("d", "carris", "cm", 4, 7, 9)])
+    con.executemany("INSERT INTO fact_transfer_hour VALUES ('2026-09-01', ?, 'b', ?)", [(8, 150.0), (9, 3.0)])
     con.close()
 
 
@@ -177,6 +181,28 @@ class CompareAndPlacesTests(unittest.TestCase):
     def test_places_ignore_accents(self):
         places = client.get("/api/places?q=sodre").json()["places"]
         self.assertEqual([p["stop_id"] for p in places], ["c"])
+
+
+class TransferPrivacyTests(unittest.TestCase):
+    def setUp(self):
+        self.hubs = {h["stop_id"]: h for h in client.get("/api/transfers?day=2026-09-01").json()["interchanges"]}
+
+    def test_small_pairs_are_counted_but_not_listed(self):
+        hub = self.hubs["b"]
+        self.assertEqual(hub["transfers"], 202)
+        self.assertEqual(hub["transfers_below_privacy"], 2)
+        self.assertEqual([(p["from_operator"], p["to_operator"]) for p in hub["pairs"]], [("metro", "carris")])
+        self.assertEqual(hub["worst_median_wait_min"], 5)  # the hidden pair's 30-minute wait never leaks
+
+    def test_small_hubs_and_hours_are_hidden(self):
+        self.assertNotIn("d", self.hubs)
+        hourly = {h["hour"]: h["transfers"] for h in self.hubs["b"]["hourly"]}
+        self.assertEqual(hourly[8], 150)
+        self.assertIsNone(hourly[9])
+
+    def test_stop_detail_hides_small_transfer_summary(self):
+        body = client.get("/api/stops/d?day=2026-09-01&hour=8").json()
+        self.assertIsNone(body["transfers_here"])
 
 
 class PipelineRuleTests(unittest.TestCase):

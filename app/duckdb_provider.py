@@ -16,6 +16,7 @@ import duckdb
 
 from . import reference as R
 from . import schemas as S
+from .privacy import PRIVACY_MIN, shown
 
 ALL_SEGMENTS = ["regular", "sub23", "senior"]
 
@@ -257,9 +258,11 @@ class DuckDBProvider:
         )
         mix_tot = sum(mix_rows.values()) or 1
         b, e = cells.get((date, hour), (0.0, 0.0))
+        # Waits only from operator pairs large enough to show; tiny hubs show no transfer summary
         tr = self._q(
-            "SELECT sum(transfers), max(median_wait_min) FROM fact_transfer WHERE stop_id = ? AND date = ?",
-            [stop_id, date],
+            """SELECT sum(transfers), max(median_wait_min) FILTER (WHERE transfers >= ?)
+               FROM fact_transfer WHERE stop_id = ? AND date = ?""",
+            [PRIVACY_MIN, stop_id, date],
         )
         return S.StopDetail(
             stop_id=s[0],
@@ -304,7 +307,7 @@ class DuckDBProvider:
                 S.TransfersHere(
                     transfers=int(tr[0][0]), worst_median_wait_min=int(tr[0][1])
                 )
-                if tr and tr[0][0] is not None
+                if tr and tr[0][0] is not None and tr[0][0] >= PRIVACY_MIN and tr[0][1] is not None
                 else None
             ),
         )
@@ -384,20 +387,25 @@ class DuckDBProvider:
             )["pairs"].append(r[4:])
         inter = []
         for st, d in by_stop.items():
+            total = sum(p[2] for p in d["pairs"])
+            if total < PRIVACY_MIN:
+                continue  # too few transfers to show this hub at all
+            # Operator pairs under the threshold are counted in the total but never listed
+            listed = [p for p in d["pairs"] if p[2] >= PRIVACY_MIN]
             # "Fragile" = a connection that matters (>= 5% of the hub's transfers, >= 50/day)
             # where the typical passenger waits 12+ minutes. Tiny pairs are ignored.
-            total = sum(p[2] for p in d["pairs"]) or 1
-            big = [p for p in d["pairs"] if p[2] >= max(50, 0.05 * total)] or d["pairs"]
-            worst = max(p[3] for p in big)
+            big = [p for p in listed if p[2] >= max(50, 0.05 * total)] or listed
+            worst = max((p[3] for p in big), default=0)
             inter.append(
                 S.Interchange(
                     stop_id=st,
                     name=d["name"],
                     lat=d["lat"],
                     lon=d["lon"],
-                    transfers=int(sum(p[2] for p in d["pairs"])),
+                    transfers=int(total),
                     worst_median_wait_min=int(worst),
                     fragile=worst >= 12,
+                    transfers_below_privacy=int(total - sum(p[2] for p in listed)),
                     pairs=[
                         S.TransferPair(
                             from_operator=p[0],
@@ -406,12 +414,10 @@ class DuckDBProvider:
                             median_wait_min=int(p[3]),
                             p90_wait_min=int(p[4]),
                         )
-                        for p in d["pairs"]
+                        for p in listed
                     ],
                     hourly=[
-                        S.HourCount(
-                            hour=h, transfers=round(hourly.get(st, {}).get(h, 0.0), 1)
-                        )
+                        S.HourCount(hour=h, transfers=shown(round(hourly.get(st, {}).get(h, 0.0), 1)))
                         for h in R.HOURS
                     ],
                 )
@@ -447,7 +453,8 @@ class DuckDBProvider:
             method="A transfer = two entry taps by the same card within 60 minutes on different operators, "
             "where the first operator stops within 400 m of the hub. Wait = minutes from the first leg's "
             "arrival (Metro exit tap, or the ferry/train timetable, or distance ÷ typical speed for buses) "
-            "to the next tap. Fragile = a connection with 5%+ of the hub's transfers and a median wait of 12+ min.",
+            "to the next tap. Fragile = a connection with 5%+ of the hub's transfers and a median wait of 12+ min. "
+            f"Operator pairs, hours and hubs with fewer than {PRIVACY_MIN} transfers are counted in totals but not shown.",
         )
 
     def _places(self, ids) -> dict:
@@ -604,7 +611,9 @@ class DuckDBProvider:
             return None
         values = {(d, h): float(v) for d, h, v in self._q(sql, params)}
         # The warehouse covers every service hour of the dataset week
-        comparison = B.build_comparison(values, date, [hour], lambda d, h: True)
+        # Transfers link a card's taps, so they get the privacy threshold; boardings do not
+        comparison = B.build_comparison(values, date, [hour], lambda d, h: True,
+                                        PRIVACY_MIN if measure == "transfers" else 0)
         return S.CompareResponse(
             measure=measure, subject=S.CompareSubject(id=subject, name=name) if name else None,
             date=date, hour=hour, comparison=comparison,

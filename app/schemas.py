@@ -235,7 +235,7 @@ class TransferPair(BaseModel):
 
 class HourCount(BaseModel):
     hour: int
-    transfers: float
+    transfers: Optional[float] = Field(description="Null when under the privacy threshold")
 
 
 class Interchange(BaseModel):
@@ -246,6 +246,7 @@ class Interchange(BaseModel):
     transfers: int
     worst_median_wait_min: int
     fragile: bool = Field(description="Any operator pair with median wait ≥ 10 min")
+    transfers_below_privacy: int = Field(0, description="Transfers in operator pairs under the privacy threshold: counted in `transfers`, not listed in `pairs`")
     pairs: List[TransferPair]
     hourly: List[HourCount]
 

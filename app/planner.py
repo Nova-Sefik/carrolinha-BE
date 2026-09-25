@@ -236,6 +236,14 @@ def resolve_place(provider, value: Optional[str]):
 
 
 def execute_tool(name: str, args: dict, base: dict, provider) -> dict:
+    """Run a tool; analysis results carry {name, args} so a client can re-run them with new filters."""
+    result = _execute(name, args, base, provider)
+    if result.get("analysis"):
+        result["tool"] = {"name": name, "args": args}
+    return result
+
+
+def _execute(name: str, args: dict, base: dict, provider) -> dict:
     if name == "find_places":
         places = provider.search_places(args.get("query", ""), 8)
         return {"places": [_dump(p) for p in places.places]}
