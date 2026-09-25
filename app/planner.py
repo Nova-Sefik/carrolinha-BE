@@ -117,7 +117,11 @@ TOOLS = [
     _tool("query_live_line_capacity", "Estimated peak on-board load versus places offered per bus/ferry line.",
           {**_LIVE, "line": {"type": ["string", "null"], "description": "Line id or label; null ranks all lines."}}),
     _tool("query_live_transfers", "Interchange volumes and median/p90 transfer waits for a day.", _LIVE),
-    _tool("query_live_anomalies", "Stop-hours with observed boardings far from expected.", _LIVE),
+    _tool("query_live_anomalies",
+          "Stop-hours with observed boardings far from expected, across the dataset week. One call with day null "
+          "returns every alert of the week; do not call once per day.",
+          {"day": {"type": ["string", "null"], "description": "ISO date to show only that day's alerts; null returns the whole week."},
+           "limit": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Maximum alerts, strongest first."}}),
     _tool("query_live_golden_routes",
           "Backend-ranked direct-line opportunities where many weekday journeys need several vehicles: best route, "
           "golden route, time saving, projected riders.",
@@ -415,10 +419,35 @@ def _execute(name: str, args: dict, base: dict, provider) -> dict:
                      "period": f"{r['date']} {_clock(r['hour'])}", "observed": r["observed"], "expected": r["expected"],
                      "change_pct": r["deviation_pct"], "robust_z": r["robust_z"], "direction": r["direction"]}
                     for r in data["alerts"][: f["limit"]]]
-        return _result("anomaly", evidence, _applied(f), ["anomalies", "mobility_map"],
-                       [data["method"], "The week alert feed is not segmented by operator or passenger type."])
+        day = args.get("day")
+        applied = {"day": day, "human_summary": f"alerts on {day}" if day else "all alerts, 31 Aug–6 Sep 2026",
+                   "logic": "Strongest alerts first (robust z-score); not filtered by hour, operator or segment."}
+        return _result("anomaly", evidence, applied, ["anomalies", "mobility_map"],
+                       [data["method"], "The alert feed is not segmented by operator or passenger type."])
 
     raise ValueError(f"Unknown tool {name}")
+
+
+# Tools whose rows are independent records with unique keys, so several calls can be shown together
+MERGEABLE_TOOLS = {"query_live_anomalies", "query_live_golden_routes"}
+
+
+def merge_runs(runs: List[dict], selected: dict) -> dict:
+    """When the model called the chart's tool several times, show every row it saw, not just the last call."""
+    name = (selected.get("tool") or {}).get("name")
+    same = [run for run in runs if (run.get("tool") or {}).get("name") == name]
+    if name not in MERGEABLE_TOOLS or len(same) < 2:
+        return selected
+    seen, rows = set(), []
+    for run in same:
+        for row in run["evidence"]:
+            if row["key"] not in seen:
+                seen.add(row["key"])
+                rows.append(row)
+    summaries = [run["applied_filters"].get("human_summary", "") for run in same]
+    limitations = list(dict.fromkeys(item for run in same for item in run["filter_limitations"]))
+    return {**selected, "evidence": rows, "filter_limitations": limitations, "tool": None,
+            "applied_filters": {**selected["applied_filters"], "human_summary": f"{len(same)} queries combined: " + "; ".join(summaries)}}
 
 
 def model_view(result: dict) -> dict:
@@ -517,6 +546,7 @@ def plan(body: dict, provider) -> dict:
         raise HTTPException(502, "The planner answered without querying mobility data.")
     parsed = json.loads(response.output_text)
     selected = next((r for r in reversed(runs) if r["analysis"] == parsed["analysis"]), runs[-1])
+    selected = merge_runs(runs, selected)
     context = {**selected, "question": question}
     recommendations, overlays = validate_recommendations(parsed.get("recommendations"), context["evidence"])
     return {

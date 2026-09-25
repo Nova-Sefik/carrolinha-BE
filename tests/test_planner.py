@@ -69,5 +69,25 @@ class PlannerSafeguardTests(unittest.TestCase):
         self.assertIn("sankey", result["journey"])  # the browser still gets it
 
 
+class MergeRunsTests(unittest.TestCase):
+    def run_of(self, day, keys):
+        return {"analysis": "anomaly", "tool": {"name": "query_live_anomalies", "args": {"day": day}},
+                "evidence": [{"key": k} for k in keys], "applied_filters": {"human_summary": f"alerts on {day}"},
+                "filter_limitations": ["same note"]}
+
+    def test_repeated_alert_calls_are_combined(self):
+        runs = [self.run_of("mon", ["a", "b"]), self.run_of("sun", ["b", "c"])]
+        merged = planner.merge_runs(runs, runs[-1])
+        self.assertEqual([row["key"] for row in merged["evidence"]], ["a", "b", "c"])
+        self.assertEqual(merged["filter_limitations"], ["same note"])
+        self.assertIn("2 queries combined", merged["applied_filters"]["human_summary"])
+        self.assertIsNone(merged["tool"])
+
+    def test_journey_runs_are_never_combined(self):
+        runs = [{**self.run_of("mon", ["a"]), "tool": {"name": "query_live_journey_traffic"}},
+                {**self.run_of("sun", ["b"]), "tool": {"name": "query_live_journey_traffic"}}]
+        self.assertIs(planner.merge_runs(runs, runs[-1]), runs[-1])
+
+
 if __name__ == "__main__":
     unittest.main()
