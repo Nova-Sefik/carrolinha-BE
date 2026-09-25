@@ -209,7 +209,7 @@ def journey_traffic(
     match: Literal["contains", "exact"] = Query("contains", description="exact = the whole journey is origin, through, destination"),
     min_volume: int = Query(0, ge=0, description="Only list paths with at least this many journeys"),
     compare: bool = Query(True, description="Include current vs typical"),
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=10_000),
     offset: int = Query(0, ge=0),
     p=Depends(get_provider),
     j=Depends(get_journeys),

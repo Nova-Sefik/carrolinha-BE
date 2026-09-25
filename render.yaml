@@ -12,10 +12,12 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.13"
-      - key: PULSO_PROVIDER
-        value: mock          # switch to duckdb once warehouse.duckdb is committed
-      - key: CARROLINHA_DB
+      - key: PULSO_DB
         value: warehouse.duckdb
+      # Keep the private journey database on server-side storage and point this
+      # at its mounted path. Never publish it as a frontend/static asset.
+      - key: CARROLINHA_JOURNEYS
+        sync: false
       # Planner secrets: set in the Render dashboard, never here
       - key: OPENAI_API_KEY
         sync: false

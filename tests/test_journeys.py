@@ -91,7 +91,13 @@ def traffic(query):
     return response.json()
 
 
-class JourneyTrafficTests(unittest.TestCase):
+class UsesJourneyFixture(unittest.TestCase):
+    def setUp(self):
+        os.environ["PULSO_DB"] = str(WAREHOUSE)
+        os.environ["CARROLINHA_JOURNEYS"] = str(JOURNEYS)
+
+
+class JourneyTrafficTests(UsesJourneyFixture):
     def test_direction_is_respected(self):
         self.assertEqual(traffic("origin=a&destination=c")["totals"]["matched_volume"], 40)
         self.assertEqual(traffic("origin=c&destination=a")["totals"]["matched_volume"], 15)
@@ -160,9 +166,11 @@ class JourneyTrafficTests(unittest.TestCase):
         self.assertEqual(client.get("/api/journey-traffic?origin=nope").status_code, 422)
         self.assertEqual(client.get("/api/journey-traffic?match=exact").status_code, 422)
         self.assertEqual(client.get("/api/journey-traffic?hour=24").status_code, 200)
+        self.assertEqual(client.get("/api/journey-traffic?limit=10000").status_code, 200)
+        self.assertEqual(client.get("/api/journey-traffic?limit=10001").status_code, 422)
 
 
-class CompareAndPlacesTests(unittest.TestCase):
+class CompareAndPlacesTests(UsesJourneyFixture):
     def test_stop_boardings_vs_typical(self):
         body = client.get("/api/compare?measure=stop_boardings&subject=a&day=2026-09-01&hour=8").json()
         self.assertEqual(body["comparison"]["current"], 100)
@@ -182,8 +190,28 @@ class CompareAndPlacesTests(unittest.TestCase):
         places = client.get("/api/places?q=sodre").json()["places"]
         self.assertEqual([p["stop_id"] for p in places], ["c"])
 
+    def test_ai_tools_expose_backend_comparison_charts(self):
+        compare = client.post("/api/tools/query_live_compare", json={
+            "args": {"measure": "network_boardings", "subject": None, "day": "2026-09-01", "hour": 8,
+                     "ops": [], "segment": "all"},
+            "live_filters": {},
+        })
+        self.assertEqual(compare.status_code, 200, compare.text)
+        self.assertEqual(compare.json()["allowed_charts"], ["hour_vs_average"])
+        self.assertEqual(compare.json()["comparison"]["status"], "ok")
 
-class TransferPrivacyTests(unittest.TestCase):
+        journey = client.post("/api/tools/query_live_journey_traffic", json={
+            "args": {"day": "2026-09-01", "hour": 8, "whole_day": False, "origin": "a",
+                     "through": [], "destination": "c", "any": [], "match": "contains",
+                     "min_volume": 0, "limit": 20},
+            "live_filters": {},
+        })
+        self.assertEqual(journey.status_code, 200, journey.text)
+        self.assertIn("hour_vs_average", journey.json()["allowed_charts"])
+        self.assertEqual(journey.json()["comparison"]["current"], 40)
+
+
+class TransferPrivacyTests(UsesJourneyFixture):
     def setUp(self):
         self.hubs = {h["stop_id"]: h for h in client.get("/api/transfers?day=2026-09-01").json()["interchanges"]}
 

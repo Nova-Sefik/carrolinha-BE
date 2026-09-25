@@ -41,7 +41,7 @@ Secrets go in `.env`, which is git-ignored. Never put them in `render.yaml`.
 The explorer endpoints (`/api/meta`, `/api/overview`, `/api/hex`, `/api/stops`, `/api/lines/{id}/profile`, `/api/transfers`, `/api/anomalies`, `/api/golden`) are documented at `/docs`. Newer endpoints:
 
 - `GET /api/places?q=` resolves a place name to hub `stop_id`s (accent-insensitive).
-- `GET /api/journey-traffic` returns journeys along a directed path (`origin`, `through`, `destination`, `any`, `match=contains|exact`), filtered by `day`, optional `hour` and `min_volume`. It returns paginated paths, a Sankey built from every shown path, totals (matched, shown, below minimum volume, below the privacy threshold) and a comparison with typical.
+- `GET /api/journey-traffic` returns journeys along a directed path (`origin`, `through`, `destination`, `any`, `match=contains|exact`), filtered by `day`, optional `hour` and `min_volume`. It accepts up to 10,000 paths so the explorer can show every privacy-safe path in the selected period, while still supporting `offset`. It returns a Sankey built from every shown path, totals (matched, shown, below minimum volume, below the privacy threshold) and a comparison with typical.
 - `GET /api/compare?measure=` returns this hour versus typical for `stop_boardings`, `network_boardings`, `transfers` or `line_boardings`.
 
 ### Definitions
