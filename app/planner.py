@@ -479,7 +479,7 @@ def plan(body: dict, provider) -> dict:
         raise HTTPException(503, "The planner is not configured: set OPENAI_API_KEY in the backend environment.")
 
     base = body.get("live_filters") or {}
-    client = OpenAI(api_key=api_key(), timeout=45, max_retries=1)
+    client = OpenAI(api_key=api_key(), timeout=45, max_retries=2)
     inputs: List[Any] = [{"role": "user", "content": json.dumps({
         "question": question[:2000],
         "recent_conversation": (body.get("conversation") or [])[-8:],

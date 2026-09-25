@@ -256,6 +256,8 @@ def planner_route(request: Request, body: dict = Body(...), p=Depends(get_provid
         raise HTTPException(429, "OpenAI rate or usage limit reached. Check the project limits and billing.")
     except openai.APITimeoutError:
         raise HTTPException(504, "OpenAI took too long to answer. Try a narrower question.")
+    except openai.APIConnectionError:
+        raise HTTPException(503, "Couldn't reach OpenAI. This is usually a brief network problem; please try again in a moment.")
     except openai.APIError as error:
         raise HTTPException(502, f"The OpenAI request failed: {getattr(error, 'message', error)}")
 
