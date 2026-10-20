@@ -2,6 +2,8 @@
 
 FastAPI backend for the Carrolinha mobility explorer (Hack the City 2026, challenge #1). It serves aggregated TML validation data for 31 Aug–6 Sep 2026 from DuckDB files; it never reads raw card data at request time.
 
+[Demo](https://carrolinha-be.onrender.com/docs)
+
 ## Run
 
 ```bash
